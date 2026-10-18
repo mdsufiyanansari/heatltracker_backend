@@ -15,38 +15,80 @@ const app = express();
 
 app.disable("x-powered-by");
 
-// CORS configuration
+// ========================================
+// 1. REQUEST LOGGER
+// ========================================
+app.use((req, res, next) => {
+  if (req.path === "/health") {
+    const timestamp = new Date().toISOString();
+    const userAgent = req.get("user-agent") || "Unknown";
+
+    console.log(
+      `[HEALTH CHECK REQUEST] ${timestamp} | ${req.method} ${req.originalUrl} | User-Agent: ${userAgent}`
+    );
+
+    res.on("finish", () => {
+      console.log(
+        `[HEALTH CHECK RESPONSE] ${new Date().toISOString()} | Status: ${
+          res.statusCode
+        }`
+      );
+    });
+  }
+
+  next();
+});
+
+// ========================================
+// 2. CORS CONFIGURATION
+// ========================================
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
   .filter(Boolean);
+
+console.log("[CORS] Allowed frontend origins:", allowedOrigins);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests without an Origin header, such as server-to-server requests.
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests without Origin, e.g. UptimeRobot.
+      if (!origin) {
         return callback(null, true);
       }
 
+      const normalizedOrigin = origin.replace(/\/+$/, "");
+
+      if (allowedOrigins.includes(normalizedOrigin)) {
+        return callback(null, true);
+      }
+
+      console.error(`[CORS BLOCKED] Origin: ${origin}`);
       return callback(new Error("Origin not allowed by CORS"));
     },
     credentials: true,
   })
 );
 
-// Parse JSON request bodies
+// ========================================
+// 3. JSON BODY PARSER
+// ========================================
 app.use(express.json({ limit: "1mb" }));
 
-// Health check
+// ========================================
+// 4. HEALTH CHECK
+// ========================================
 app.get("/health", (_req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
     message: "Fitness Tracker API is running.",
+    timestamp: new Date().toISOString(),
   });
 });
 
-// API routes
+// ========================================
+// 5. API ROUTES
+// ========================================
 app.use("/api/auth", authRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/assessments", assessmentRoutes);
@@ -54,7 +96,9 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/routes", routeRoutes);
 app.use("/api/coach", coachRoutes);
 
-// 404 handler
+// ========================================
+// 6. 404 HANDLER
+// ========================================
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -62,9 +106,11 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler
+// ========================================
+// 7. GLOBAL ERROR HANDLER
+// ========================================
 app.use((err, _req, res, _next) => {
-  console.error("API Error:", err);
+  console.error("[API ERROR]", err.message);
 
   if (err?.code === 11000) {
     return res.status(409).json({
@@ -87,22 +133,25 @@ app.use((err, _req, res, _next) => {
     });
   }
 
-  res.status(500).json({
+  return res.status(500).json({
     success: false,
     message: "Internal server error.",
   });
 });
 
-// Start server after database connection
+// ========================================
+// 8. START SERVER
+// ========================================
 const PORT = Number(process.env.PORT) || 4000;
 
 connectDB()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`API running on port ${PORT}`);
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[SERVER] API running on port ${PORT}`);
+      console.log("[SERVER] Health endpoint: /health");
     });
   })
   .catch((err) => {
-    console.error("Server startup failed:", err.message);
+    console.error("[SERVER STARTUP FAILED]", err.message);
     process.exit(1);
   });
